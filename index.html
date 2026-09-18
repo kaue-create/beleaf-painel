@@ -553,8 +553,12 @@ function renderG(){
   var q=document.getElementById('srch').value.toLowerCase();
   var grid=document.getElementById('prodGrid');
   var items=BASE_PRODUTOS.filter(function(p){
-    if(fMode==='ativo'&&(p.status.indexOf('ATIVO')<0||p.status.indexOf('INATIVO')>=0))return false;
-    if(fMode==='inativo'&&(p.status.indexOf('INATIVO')<0&&p.status.indexOf('ATIVO')>=0))return false;
+    var _isAtivo=p.status==='ATIVO';
+    var _isNovo=p.status==='NOVO';
+    var _isInativo=!_isAtivo&&!_isNovo;
+    if(fMode==='ativo'&&!_isAtivo)return false;
+    if(fMode==='novo'&&!_isNovo)return false;
+    if(fMode==='inativo'&&!_isInativo)return false;
     if(q){var nm=p.nome.toLowerCase(),sk=String(p.sku).toLowerCase();if(nm.indexOf(q)<0&&sk.indexOf(q)<0)return false;}
     return true;
   });
@@ -562,11 +566,14 @@ function renderG(){
   var html='',shown=items.slice(0,90);
   shown.forEach(function(p){
     var ia=p.status.indexOf('ATIVO')>=0&&p.status.indexOf('INATIVO')<0;
+    var isNovo=p.status==='NOVO';
+    var badgeCls=ia?'sb-a':(isNovo?'sb-n':'sb-i');
+    var badgeTxt=ia?'ATIVO':(isNovo?'NOVO':'INATIVO');
     var sel=(selSKU===String(p.sku))?'sel':'';
     html+='<div class="pcard '+sel+'" onclick="selProd(\''+String(p.sku).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">'+
       '<div class="pname">'+escH(p.nome)+'</div>'+
       '<div class="pmeta">SKU '+escH(String(p.sku))+' &middot; '+Math.round(p.peso)+'g'+
-      '<span class="sbadge '+(ia?'sb-a':'sb-i')+'">'+(ia?'ATIVO':'INATIVO')+'</span></div></div>';
+      '<span class="sbadge '+badgeCls+'">'+badgeTxt+'</span></div></div>';
   });
   if(items.length>90)html+='<div style="grid-column:1/-1;text-align:center;font-size:.69rem;color:var(--ink3);padding:.45rem">+'+(items.length-90)+' &mdash; refine a busca</div>';
   grid.innerHTML=html;
@@ -1302,12 +1309,18 @@ function fetchFromSheets(manual) {
   setSyncStatus("loading");
   showSyncMsg("loading", "Buscando dados do Google Sheets...");
 
-  fetch(SHEETS_URL + (SHEETS_URL.indexOf("?") >= 0 ? "&" : "?") + "_ts=" + Date.now())
+  // Use no-cors mode not possible for JSON — use direct fetch with timeout
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timeoutId  = controller ? setTimeout(function(){ controller.abort(); }, 15000) : null;
+  var fetchOpts  = controller ? { signal: controller.signal } : {};
+
+  fetch(SHEETS_URL + (SHEETS_URL.indexOf("?") >= 0 ? "&" : "?") + "_ts=" + Date.now(), fetchOpts)
     .then(function(r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     })
     .then(function(data) {
+      if(timeoutId) clearTimeout(timeoutId);
       if (!data.produtos || !data.produtos.length) {
         throw new Error("JSON inválido ou vazio");
       }
@@ -1321,8 +1334,10 @@ function fetchFromSheets(manual) {
       if (!manual) scheduleNextSync();
     })
     .catch(function(err) {
+      if(timeoutId) clearTimeout(timeoutId);
       setSyncStatus("error");
-      showSyncMsg("error", "❌ Erro: " + err.message + ". Verifique a URL e a permissão do Web App.");
+      var msg = err.name === "AbortError" ? "❌ Timeout — Sheets demorou demais. Tente ⋳ novamente." : "❌ " + err.message;
+      showSyncMsg("error", msg);
     });
 }
 
@@ -1508,7 +1523,7 @@ initSheetsURL();
 setTimeout(function() { renderKPIPanel(); }, 50);  // after DOM settles
 
 if (SHEETS_URL) {
-  setTimeout(function(){ fetchFromSheets(false); }, 800);
+  setTimeout(function(){ fetchFromSheets(false); }, 1500);
 }
 
 
